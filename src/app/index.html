@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gilbert 图片混淆 · 网页版（不二次编码）</title>
+<meta name="description" content="基于 Gilbert 曲线的图片混淆：像素只在内存里置换，显示走 putImageData，全程不重新编码，因此反复混淆/解混淆也不会掉画质。">
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+<header>
+  <div class="head-main">
+    <div>
+      <a class="backlink" href="../../index.html">← 项目主页（CLI 优先）</a>
+      <h1>Gilbert 图片混淆 · 网页版</h1>
+      <p class="lede">
+        把图片按 Gilbert 曲线打散，随时可逆。
+        <strong>像素只在内存里置换、显示直接贴图</strong>，整条链路不重新编码 ——
+        反复混淆 / 解混淆也不会掉画质。
+      </p>
+    </div>
+    <div class="badges">
+      <span>零二次编码</span>
+      <span>顺序表</span>
+      <span>浮点 / 整数双模式</span>
+      <span>大图保护</span>
+    </div>
+  </div>
+</header>
+
+<main>
+  <section class="stage">
+    <div class="stage-head">
+      <span class="chip" title="像素始终留在内存，显示用 putImageData 直接贴图">内存直显 · 不重新编码</span>
+      <span class="chip muted" id="chip-ops">未载入</span>
+    </div>
+
+    <div class="dropzone" id="dropzone">
+      <div>
+        <p class="dz-title">拖拽图片到这里，或 <kbd>Ctrl</kbd>+<kbd>V</kbd> 粘贴</p>
+        <p class="hint" id="limit-hint"></p>
+      </div>
+    </div>
+    <canvas id="display" hidden></canvas>
+
+    <div class="stage-bar">
+      <button class="primary" id="pick" title="选择本地图片">选择图片</button>
+      <button id="sample" title="生成一张测试图，用来试功能">载入示例图</button>
+      <button id="restore" title="回到刚载入时的像素">还原</button>
+      <span class="spacer"></span>
+      <button id="download-png" title="无损，推荐">下载 PNG</button>
+      <button id="download-jpg" title="有损，质量由右侧决定">下载 JPEG</button>
+      <label class="qa" title="仅影响 JPEG 导出">质量
+        <input id="jpg-quality" type="number" min="10" max="100" value="95">
+      </label>
+    </div>
+    <input type="file" id="file" accept="image/*" hidden>
+  </section>
+
+  <aside class="panel">
+    <section class="card">
+      <h2>快速上手</h2>
+      <ol class="steps">
+        <li><b>载入</b>拖拽 / 粘贴 / 选择文件。超过像素上限会<strong>直接报错</strong>，不会偷偷缩放。</li>
+        <li><b>混淆</b>「混淆 1 轮」走一步；「按表编码」按顺序表一次走完（表里 27 步也只重排一次）。</li>
+        <li><b>校验</b>「与原始图」显示<em>逐像素相同</em>就是零损失；做对应次数的解混淆即可回到这里。</li>
+        <li><b>导出</b>只有点下载时才真正编码一次：PNG 无损，JPEG 可选质量。</li>
+      </ol>
+    </section>
+
+    <section class="card">
+      <h2>单步混淆</h2>
+      <label>取整规则
+        <select id="mode" title="一次编码 = 沿曲线后移 L 位；两种模式的 L 不同">
+          <option value="compat">兼容模式（浮点取整）</option>
+          <option value="int">整数模式（纯整数）</option>
+        </select>
+      </label>
+      <div class="row">
+        <button id="enc" title="按当前模式正向置换 1 次">混淆 1 轮</button>
+        <button id="dec" title="按当前模式反向置换 1 次">解混淆 1 轮</button>
+      </div>
+      <dl class="stats">
+        <div><dt>图片</dt><dd id="stat-size">—</dd></div>
+        <div><dt>像素</dt><dd id="stat-mp">—</dd></div>
+        <div><dt>本图位移 L</dt><dd id="stat-shift">—</dd></div>
+        <div><dt>累计操作</dt><dd id="stat-ops">0</dd></div>
+        <div class="wide"><dt>与原始图</dt><dd id="stat-diff">—</dd></div>
+      </dl>
+    </section>
+
+    <section class="card">
+      <h2>顺序表</h2>
+      <p class="note" id="table-desc">写一串整数，正数代表正向、负数代表反向；解码时倒着取表并取反。</p>
+      <textarea id="table" rows="3" spellcheck="false" aria-label="编码表">[1, -3, 4, 7, -5, 7]</textarea>
+      <div class="row">
+        <label class="mini">长度 <input id="gen-length" type="number" min="1" max="512" value="8"></label>
+        <label class="mini">幅度 <input id="gen-range" type="number" min="1" max="64" value="8"></label>
+        <button id="gen" title="随机生成一张表，默认长度 8、范围 ±8">生成编码表</button>
+      </div>
+      <div class="row">
+        <button id="apply-enc" title="按表正向执行">按表编码</button>
+        <button id="apply-dec" title="倒着取表并取反后执行">按表解码</button>
+      </div>
+      <dl class="stats">
+        <div><dt>展开步数</dt><dd id="stat-steps">—</dd></div>
+        <div><dt>折叠净位移</dt><dd id="stat-netshift">—</dd></div>
+        <div class="wide"><dt>解码用表</dt><dd id="stat-invtable" class="mono">—</dd></div>
+      </dl>
+      <p class="note" id="table-error"></p>
+    </section>
+
+    <section class="card">
+      <h2>设置</h2>
+      <label>像素上限（MP）<input id="max-mp" type="number" min="0.1" step="0.1" value="16"></label>
+      <p class="note">超过上限直接报错，不做缩放 —— 缩放会改变像素网格，且不可逆。</p>
+    </section>
+
+    <details class="card">
+      <summary>原理与版本</summary>
+      <div class="details-body">
+        <p><b>为什么不会包浆？</b>同类工具每点一次按钮都会把画布重新编码一次（JPEG 有损），误差逐轮叠加。
+          这里把像素留在内存（一份 <code>Uint8ClampedArray</code>），显示用 <code>putImageData</code> 直接贴图，
+          只有点「下载」时才编码一次。</p>
+        <p><b>顺序表怎么算？</b>一次编码 = 沿曲线后移 <code>L</code> 位，所以正向 k 次 = <code>k·L</code>、
+          反向 = <code>−k·L</code>；整张表等价于一次 <code>(Σ表项)·L</code> 的旋转，展开 27 步也只重排一次。</p>
+        <p><b>两种模式？</b><code>compat</code>（兼容模式）用 <code>round(φ⁻¹·N)</code> 取整，
+          与采用同一取整规则的实现互解；<code>int</code>（整数模式）用 <code>(N×618)/1000</code>，
+          全程整数、跨平台确定，但与兼容模式<b>不互通</b>。</p>
+        <p><b>为什么优先用 CLI？</b>批处理、大图、自动化都更适合命令行：<code>ci/cli.mjs</code>（Node）和
+          <code>ci/py/gilbert_cli.py</code>（Python）无头、零三方依赖、PNG 进 PNG 出。浏览器里没有 Node / Python
+          运行时，所以本页面只是可选 GUI。两者共用同一套算法，<b>产物逐字节互通</b>
+          （页面混淆可以 CLI 解开，或反过来）。</p>
+      </div>
+    </details>
+  </aside>
+</main>
+
+<footer>
+  命令行（推荐）：<code>node ci/cli.mjs</code>（Node） / <code>python3 ci/py/gilbert_cli.py</code>（Python） ·
+  本页面：内存直显 · 导出才编码一次
+</footer>
+
+<div class="toast" id="toast" hidden></div>
+<script type="module" src="./app.js"></script>
+</body>
+</html>

@@ -1,0 +1,23 @@
+{
+  "name": "gilbert-hunxiao",
+  "version": "1.0.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "description": "Gilbert 曲线图片混淆：CLI 优先（Node / Python 无头、零依赖）+ 可选无损网页版（顺序表编码）",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "cli": "node ci/cli.mjs",
+    "cli:py": "python3 ci/py/gilbert_cli.py",
+    "test": "node --test test/",
+    "bench": "node ci/bench.mjs",
+    "serve": "node tools/serve.mjs"
+  },
+  "homepage": "https://gilbert.yangdujun.top/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yandujun363/gilbert-hunxiao.git"
+  }
+}
