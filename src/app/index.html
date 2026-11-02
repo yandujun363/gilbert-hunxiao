@@ -125,7 +125,9 @@
         <p><b>顺序表怎么算？</b>一次编码 = 沿曲线后移 <code>L</code> 位，所以正向 k 次 = <code>k·L</code>、
           反向 = <code>−k·L</code>；整张表等价于一次 <code>(Σ表项)·L</code> 的旋转，展开 27 步也只重排一次。</p>
         <p><b>两种模式？</b><code>compat</code>（兼容模式）用 <code>round(φ⁻¹·N)</code> 取整，
-          与采用同一取整规则的实现互解；<code>int</code>（整数模式）用 <code>(N×618)/1000</code>，
+          <b>只有单次编码</b>（单轮、不带表）才与采用同一取整规则的实现一键互解；
+          多轮或按表之后，外部实现仍能解，但只能手动按对方向重复净步数次，容易点错。
+          <code>int</code>（整数模式）用 <code>(N×618)/1000</code>，
           全程整数、跨平台确定，但与兼容模式<b>不互通</b>。</p>
         <p><b>为什么优先用 CLI？</b>批处理、大图、自动化都更适合命令行：<code>ci/cli.mjs</code>（Node）和
           <code>ci/py/gilbert_cli.py</code>（Python）无头、零三方依赖、PNG 进 PNG 出。浏览器里没有 Node / Python
