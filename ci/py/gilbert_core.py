@@ -3,13 +3,15 @@
 
 与 JS 版（src/core/*.js）逐位一致：
   - Gilbert 曲线：同样的递归切分、同样的 Math.floor 半宽、同样的入栈顺序；
-  - 位移 L：compat = floor(φ⁻¹·N + 0.5)（即 JS 的 Math.round），int = (N×618)//1000；
+  - 位移 L：compat = floor(φ⁻¹·N + 0.5)（即 JS 的 Math.round），int = (N×618)//1000，
+    custom = 调用方给定的整数，且必须满足 0 ≤ L < N（越界直接报错，不取模）；
   - 一次编码 = 沿曲线旋转 L；顺序表 = 一次净旋转 (Σ表项)·L。
 """
 
 from __future__ import annotations
 
 import math
+import re
 from array import array
 
 try:  # numpy 可选：只是加速，不影响结果
@@ -20,8 +22,12 @@ except Exception:  # pragma: no cover
 PHI_INV = (math.sqrt(5.0) - 1.0) / 2.0  # 0.6180339887498949
 assert repr(PHI_INV) == "0.6180339887498949"
 
-MODES = ("compat", "int")
-MODE_LABEL = {"compat": "兼容模式（浮点取整）", "int": "整数模式（纯整数）"}
+MODES = ("compat", "int", "custom")
+MODE_LABEL = {
+    "compat": "兼容模式（浮点取整）",
+    "int": "整数模式（纯整数）",
+    "custom": "自定义模式（手填 L）",
+}
 
 DEFAULT_MAX_PIXELS = 16_000_000
 DEFAULT_MAX_SIDE = 8192
@@ -56,12 +62,33 @@ def assert_size(width: int, height: int, *, max_pixels: int = DEFAULT_MAX_PIXELS
 
 
 # ---------------------------------------------------------------- 位移
-def shift_for(mode: str, n: int) -> int:
+def shift_for(mode: str, n: int, custom_shift: int | None = None) -> int:
     if mode == "compat":
         return int(math.floor(PHI_INV * n + 0.5))
     if mode == "int":
         return (n * 618) // 1000
+    if mode == "custom":
+        return assert_custom_shift(custom_shift, n)
     raise ValueError(f"未知模式: {mode}")
+
+
+def assert_custom_shift(value: int | None, n: int) -> int:
+    """自定义位移：必须是整数，且 0 ≤ L < n；越界直接报错，绝不自动取模。"""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"自定义 L 必须是整数（收到 {value!r}）")
+    if value < 0 or value >= n:
+        raise ValueError(f"自定义 L 必须在 0 ≤ L < {n} 之间（收到 {value}）")
+    return value
+
+
+def parse_shift(text: str) -> int:
+    """严格解析用户输入的 L：只认十进制整数（不认小数、指数、空串）。"""
+    raw = str(text).strip()
+    if not raw:
+        raise ValueError("L 不能为空")
+    if not re.fullmatch(r"[+-]?\d+", raw):
+        raise ValueError("L 必须是十进制整数")
+    return int(raw)
 
 
 # ---------------------------------------------------------------- Gilbert
@@ -167,10 +194,10 @@ def permute_into(src: array, dst: array, order: array, shift: int, inverse: bool
 
 
 def apply_rounds(pixels: array, width: int, height: int, mode: str, rounds: int,
-                 inverse: bool = False) -> array:
+                 inverse: bool = False, custom_shift: int | None = None) -> array:
     n = width * height
     order = order_for(width, height)
-    shift = shift_for(mode, n)
+    shift = shift_for(mode, n, custom_shift)
     src = pixels
     dst = array("I", bytes(4 * n))
     for _ in range(rounds):
@@ -179,17 +206,18 @@ def apply_rounds(pixels: array, width: int, height: int, mode: str, rounds: int,
     return src
 
 
-def table_shift(n: int, mode: str, table: list[int], inverse: bool = False) -> int:
+def table_shift(n: int, mode: str, table: list[int], inverse: bool = False,
+                custom_shift: int | None = None) -> int:
     steps = net_steps(invert_table(table) if inverse else table)
-    return (shift_for(mode, n) * (steps % n)) % n
+    return (shift_for(mode, n, custom_shift) * (steps % n)) % n
 
 
 def apply_table(pixels: array, width: int, height: int, mode: str, table: list[int],
-                inverse: bool = False) -> array:
+                inverse: bool = False, custom_shift: int | None = None) -> array:
     n = width * height
     order = order_for(width, height)
     dst = array("I", bytes(4 * n))
-    return permute_into(pixels, dst, order, table_shift(n, mode, table, inverse), False)
+    return permute_into(pixels, dst, order, table_shift(n, mode, table, inverse, custom_shift), False)
 
 
 # ---------------------------------------------------------------- 顺序表
@@ -248,11 +276,12 @@ def generate_table(length: int = DEFAULT_TABLE_LENGTH, rng_range: int = DEFAULT_
 
 
 def apply_table_sequential(pixels: array, width: int, height: int, mode: str,
-                           table: list[int], inverse: bool = False) -> array:
+                           table: list[int], inverse: bool = False,
+                           custom_shift: int | None = None) -> array:
     """朴素实现：逐项逐次执行（只用于对拍/基准，大图勿用）。"""
     n = width * height
     order = order_for(width, height)
-    shift = shift_for(mode, n)
+    shift = shift_for(mode, n, custom_shift)
     steps = invert_table(table) if inverse else table
     src = pixels
     dst = array("I", bytes(4 * n))

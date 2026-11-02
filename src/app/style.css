@@ -75,6 +75,8 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 button.primary:hover:not(:disabled) { filter: brightness(1.08); color: #fff; }
 button:disabled { opacity: .45; cursor: not-allowed; }
 input[type="number"] { width: 72px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+#custom-shift { width: 120px; }
+#custom-shift-box { margin: 8px 0 0; }
 select { padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
 textarea {
   width: 100%; resize: vertical; padding: 9px 10px; border: 1px solid var(--border);

@@ -21,7 +21,7 @@ import { gilbertOrder } from '../src/core/gilbert.js';
 import { assertSize, DEFAULT_MAX_PIXELS, DEFAULT_MAX_SIDE } from '../src/core/limits.js';
 import { applyRounds, applyTable, applyTableSequential, tableShift } from '../src/core/permute.js';
 import { decodePng, encodePng, readPngInfo } from '../src/core/png.js';
-import { shiftFor, MODES } from '../src/core/shift.js';
+import { shiftFor, assertCustomShift, parseShift, MODES } from '../src/core/shift.js';
 import {
   generateTable, parseTable, formatTable, netSteps, totalSteps, describeTable,
 } from '../src/core/table.js';
@@ -32,11 +32,12 @@ const USAGE = `用法: node ci/cli.mjs <command> [...]
   encode <in.png> <out.png>     混淆（可用 --rounds 或 --table）
   decode <in.png> <out.png>     解混淆（--table 时自动倒表取反）
   gen-table                     生成随机顺序表
-  info <in.png>                 看尺寸 / 两种模式的位移 / 表折叠后的净位移
+  info <in.png>                 看尺寸 / 各模式的位移 / 表折叠后的净位移
   selftest                      内置自检
 
 通用参数:
-  --mode compat|int     取整规则（compat=兼容浮点取整，int=纯整数；默认 compat）
+  --mode compat|int|custom  L 规则（compat=兼容浮点取整，int=纯整数，custom=手填 L；默认 compat）
+  --shift L             自定义模式的位移量：整数，且 0 ≤ L < 像素总数（越界直接报错，不取模）
   --rounds N            连续置换 N 轮
   --table "T"           顺序表，如 "[1,-3,4,7,-5,7]"
   --max-mp N            像素上限（百万），默认 ${DEFAULT_MAX_PIXELS / 1e6}
@@ -53,6 +54,24 @@ function parseTableArg(raw) {
   return parsed.table;
 }
 
+function parseShiftArg(raw) {
+  const parsed = parseShift(raw);
+  if (!parsed.ok) fail(`--shift 解析失败：${parsed.error}`, 2);
+  return parsed.shift;
+}
+
+/** 校验 --mode / --shift 的组合；返回 custom 模式的 L（非 custom 时为 undefined） */
+function customShiftFrom(values) {
+  const customShift = values.shift === undefined ? undefined : parseShiftArg(values.shift);
+  if (values.mode === 'custom' && customShift === undefined) {
+    fail('--mode custom 需要同时给 --shift L', 2);
+  }
+  if (values.mode !== 'custom' && customShift !== undefined) {
+    fail('--shift 只能配合 --mode custom 使用', 2);
+  }
+  return customShift;
+}
+
 function main(argv) {
   const { values, positionals } = parseArgs({
     args: argv,
@@ -61,6 +80,7 @@ function main(argv) {
       mode: { type: 'string', default: 'compat' },
       rounds: { type: 'string' },
       table: { type: 'string' },
+      shift: { type: 'string' },
       'max-mp': { type: 'string' },
       length: { type: 'string' },
       range: { type: 'string' },
@@ -106,6 +126,7 @@ function runTransform(cmd, args, values) {
   const table = values.table === undefined ? null : parseTableArg(values.table);
   const rounds = values.rounds === undefined ? 1 : Number(values.rounds);
   if (!table && (!Number.isInteger(rounds) || rounds < 0)) fail('--rounds 必须是非负整数', 2);
+  const customShift = customShiftFrom(values);
 
   const limits = limitsFrom(values);
   const buf = fs.readFileSync(input);
@@ -118,6 +139,15 @@ function runTransform(cmd, args, values) {
     fail(err.message);
   }
 
+  // 自定义 L 的范围校验也放在 inflate 之前：坏参数连解码阶段都不进
+  if (customShift !== undefined) {
+    try {
+      assertCustomShift(customShift, info.width * info.height);
+    } catch (err) {
+      fail(err.message, 2);
+    }
+  }
+
   const t0 = performance.now();
   const { width, height, data } = decodePng(buf);
   const t1 = performance.now();
@@ -125,10 +155,10 @@ function runTransform(cmd, args, values) {
   let pixels;
   let steps;
   if (table) {
-    pixels = applyTable(data, { width, height, mode: values.mode, table, inverse });
+    pixels = applyTable(data, { width, height, mode: values.mode, table, inverse, shift: customShift });
     steps = totalSteps(table);
   } else {
-    pixels = applyRounds(data, { width, height, mode: values.mode, rounds, inverse });
+    pixels = applyRounds(data, { width, height, mode: values.mode, rounds, inverse, shift: customShift });
     steps = rounds;
   }
   const t2 = performance.now();
@@ -146,8 +176,9 @@ function runTransform(cmd, args, values) {
     table: table ? formatTable(table) : null,
     rounds: table ? null : rounds,
     steps,
-    singleShift: shiftFor(values.mode, n),
-    netShift: table ? tableShift(n, values.mode, table, inverse) : null,
+    customShift: customShift ?? null,
+    singleShift: shiftFor(values.mode, n, customShift),
+    netShift: table ? tableShift(n, values.mode, table, inverse, customShift) : null,
     ms: { decode: +(t1 - t0).toFixed(1), permute: +(t2 - t1).toFixed(1), encode: +(t3 - t2).toFixed(1) },
     rssMB: +(process.memoryUsage().rss / 1048576).toFixed(0),
   };
@@ -187,8 +218,18 @@ function runInfo(input, values) {
   const buf = fs.readFileSync(input);
   const info = readPngInfo(buf);
   const n = info.width * info.height;
+  const customShift = customShiftFrom(values);
+  if (customShift !== undefined) {
+    try {
+      assertCustomShift(customShift, n);
+    } catch (err) {
+      fail(err.message, 2);
+    }
+  }
   let table = null;
   if (values.table !== undefined) table = parseTableArg(values.table);
+  const shifts = { compat: shiftFor('compat', n), int: shiftFor('int', n) };
+  if (customShift !== undefined) shifts.custom = customShift;
   const out = {
     file: input,
     width: info.width,
@@ -196,14 +237,14 @@ function runInfo(input, values) {
     megapixels: +(n / 1e6).toFixed(3),
     bitDepth: info.bitDepth,
     colorType: info.colorType,
-    shifts: { compat: shiftFor('compat', n), int: shiftFor('int', n) },
+    shifts,
   };
   if (table) {
     out.table = formatTable(table);
     out.steps = totalSteps(table);
     out.netSteps = netSteps(table);
-    out.netShift = tableShift(n, values.mode, table, false);
-    out.netShiftInverse = tableShift(n, values.mode, table, true);
+    out.netShift = tableShift(n, values.mode, table, false, customShift);
+    out.netShiftInverse = tableShift(n, values.mode, table, true, customShift);
   }
   process.stdout.write(JSON.stringify(out, null, 2) + '\n');
 }
@@ -246,6 +287,21 @@ function runSelftest() {
   let diff2 = 0;
   for (let i = 0; i < px.length; i++) if (enc[i] !== seq[i]) diff2++;
   check('折叠 1 次 == 逐项展开 27 步', diff2 === 0);
+
+  const customL = n - 11; // 故意偏离 φ⁻¹·N，验证自定义 L 真的生效
+  const encC = applyRounds(px, { width: w, height: h, mode: 'custom', shift: customL, rounds: 1 });
+  const backC = applyRounds(encC, { width: w, height: h, mode: 'custom', shift: customL, rounds: 1, inverse: true });
+  let diff3 = 0;
+  for (let i = 0; i < px.length; i++) if (px[i] !== backC[i]) diff3++;
+  check(`自定义 L=${customL} 编码→解码 逐字节还原`, diff3 === 0);
+
+  let rejected = false;
+  try {
+    applyRounds(px, { width: w, height: h, mode: 'custom', shift: n, rounds: 1 });
+  } catch {
+    rejected = true;
+  }
+  check('自定义 L=N 越界被拒绝（不自动取模）', rejected);
 
   process.stdout.write(failed ? `\n${failed} 项失败\n` : '\n全部通过\n');
   process.exit(failed ? 1 : 0);

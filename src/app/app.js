@@ -9,7 +9,7 @@
  */
 
 import { applyRounds, applyTable, tableShift } from '../core/permute.js';
-import { shiftFor } from '../core/shift.js';
+import { shiftFor, assertCustomShift, parseShift } from '../core/shift.js';
 import { assertSize, DEFAULT_MAX_PIXELS, DEFAULT_MAX_SIDE } from '../core/limits.js';
 import {
   parseTable, formatTable, generateTable, invertTable, netSteps, totalSteps, describeTable,
@@ -24,6 +24,9 @@ const els = {
   limitHint: $('limit-hint'),
   toast: $('toast'),
   mode: /** @type {HTMLSelectElement} */ ($('mode')),
+  customShiftBox: $('custom-shift-box'),
+  customShift: /** @type {HTMLInputElement} */ ($('custom-shift')),
+  customShiftError: $('custom-shift-error'),
   table: /** @type {HTMLTextAreaElement} */ ($('table')),
   tableError: $('table-error'),
   tableDesc: $('table-desc'),
@@ -69,6 +72,42 @@ function toast(message, ok = false) {
   els.toast.classList.toggle('ok', ok);
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { els.toast.hidden = true; }, ok ? 2200 : 6000);
+}
+
+/* ------------------------------------------------------------------ 自定义 L */
+
+/**
+ * 当前模式下这张图的 L。custom 模式会严格解析并校验 0 ≤ L < N。
+ * @param {number} n 像素总数
+ * @returns {{ok: true, shift: number} | {ok: false, error: string}}
+ */
+function shiftForImage(n) {
+  if (state.mode !== 'custom') return { ok: true, shift: shiftFor(state.mode, n) };
+  const parsed = parseShift(els.customShift.value);
+  if (!parsed.ok) return { ok: false, error: parsed.error };
+  try {
+    return { ok: true, shift: assertCustomShift(parsed.shift, n) };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
+function updateCustomShiftUI() {
+  const custom = state.mode === 'custom';
+  els.customShiftBox.hidden = !custom;
+  if (!custom) {
+    els.customShiftError.hidden = true;
+    return;
+  }
+  const n = state.width * state.height;
+  if (n > 0) els.customShift.max = String(n - 1);
+  if (!hasImage()) {
+    els.customShiftError.hidden = true;
+    return;
+  }
+  const res = shiftForImage(n);
+  els.customShiftError.hidden = res.ok;
+  if (!res.ok) els.customShiftError.textContent = res.error;
 }
 
 /* ------------------------------------------------------------------ 渲染 */
@@ -124,7 +163,8 @@ function updateStats() {
   const n = width * height;
   els.statSize.textContent = `${width}×${height}`;
   els.statMp.textContent = `${(n / 1e6).toFixed(2)} MP`;
-  els.statShift.textContent = String(shiftFor(state.mode, n));
+  const shiftRes = shiftForImage(n);
+  els.statShift.textContent = shiftRes.ok ? String(shiftRes.shift) : 'L 非法';
   els.statOps.textContent = state.ops ? `${state.ops} 次（${state.steps} 步）` : '0';
   els.chipOps.textContent = `${width}×${height} · ${state.ops} 次操作`;
   updateDiff();
@@ -159,7 +199,10 @@ function updateTableStats() {
   if (hasImage()) {
     const n = state.width * state.height;
     const net = netSteps(table);
-    els.statNetShift.textContent = `${net} × L = ${tableShift(n, state.mode, table)} px`;
+    const shiftRes = shiftForImage(n);
+    els.statNetShift.textContent = shiftRes.ok
+      ? `${net} × L = ${tableShift(n, state.mode, table, false, shiftRes.shift)} px`
+      : `${net} × L（L 非法）`;
   } else {
     els.statNetShift.textContent = `${netSteps(table)} × L`;
   }
@@ -183,6 +226,7 @@ function setImage({ width, height, data, name }) {
   state.ops = 0;
   state.steps = 0;
   render();
+  updateCustomShiftUI();
   updateStats();
   updateTableStats();
   setBusy(false); // 有图了，放开按钮
@@ -223,9 +267,12 @@ function setBusy(busy) {
 
 function runRounds(inverse) {
   if (!hasImage()) return toast('先载入一张图片');
+  const shiftRes = shiftForImage(state.width * state.height);
+  if (!shiftRes.ok) return toast(`自定义 L 非法：${shiftRes.error}`);
   try {
     const result = applyRounds(state.data, {
       width: state.width, height: state.height, mode: state.mode, rounds: 1, inverse,
+      shift: state.mode === 'custom' ? shiftRes.shift : undefined,
     }, state.spare);
     if (result !== state.data) [state.data, state.spare] = [result, state.data];
     state.ops += 1;
@@ -241,9 +288,12 @@ function runTable(inverse) {
   if (!hasImage()) return toast('先载入一张图片');
   const table = currentTable();
   if (!table) return toast('编码表有问题，先修一下');
+  const shiftRes = shiftForImage(state.width * state.height);
+  if (!shiftRes.ok) return toast(`自定义 L 非法：${shiftRes.error}`);
   try {
     const result = applyTable(state.data, {
       width: state.width, height: state.height, mode: state.mode, table, inverse,
+      shift: state.mode === 'custom' ? shiftRes.shift : undefined,
     }, state.spare);
     if (result !== state.data) [state.data, state.spare] = [result, state.data];
     state.ops += 1;
@@ -358,6 +408,12 @@ function bind() {
   els.table.addEventListener('input', updateTableStats);
   els.mode.addEventListener('change', () => {
     state.mode = els.mode.value;
+    updateCustomShiftUI();
+    updateStats();
+    updateTableStats();
+  });
+  els.customShift.addEventListener('input', () => {
+    updateCustomShiftUI();
     updateStats();
     updateTableStats();
   });
@@ -393,6 +449,7 @@ function init() {
   state.mode = els.mode.value;
   els.limitHint.textContent = `上限：${(DEFAULT_MAX_PIXELS / 1e6).toFixed(0)} MP / 单边 ${DEFAULT_MAX_SIDE}px（超限直接报错）`;
   bind();
+  updateCustomShiftUI();
   updateTableStats();
   setBusy(false);
 }

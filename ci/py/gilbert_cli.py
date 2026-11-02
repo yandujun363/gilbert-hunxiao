@@ -44,6 +44,21 @@ def to_pixels(rgba: bytes | bytearray) -> array:
     return a
 
 
+def custom_shift_from(args: argparse.Namespace) -> int | None:
+    """解析并校验 --mode / --shift 组合；只有 custom 模式会返回 L。"""
+    custom = None
+    if args.shift is not None:
+        try:
+            custom = core.parse_shift(args.shift)
+        except ValueError as err:
+            fail(f"--shift 解析失败：{err}", 2)
+    if args.mode == "custom" and custom is None:
+        fail("--mode custom 需要同时给 --shift L", 2)
+    if args.mode != "custom" and custom is not None:
+        fail("--shift 只能配合 --mode custom 使用", 2)
+    return custom
+
+
 def cmd_encode_decode(args: argparse.Namespace) -> int:
     inverse = args.command == "decode"
     if args.table is not None and args.rounds is not None:
@@ -52,6 +67,7 @@ def cmd_encode_decode(args: argparse.Namespace) -> int:
     rounds = 1 if args.rounds is None else args.rounds
     if table is None and rounds < 0:
         fail("--rounds 必须是非负整数", 2)
+    custom = custom_shift_from(args)
 
     max_pixels = int(round(args.max_mp * 1e6))
     data = Path(args.input).read_bytes()
@@ -63,6 +79,13 @@ def cmd_encode_decode(args: argparse.Namespace) -> int:
     except core.ImageTooLargeError as err:
         fail(str(err))
 
+    # 自定义 L 的范围校验也在解压之前：坏参数连解码阶段都不进
+    if custom is not None:
+        try:
+            core.assert_custom_shift(custom, info["width"] * info["height"])
+        except ValueError as err:
+            fail(str(err), 2)
+
     t0 = time.perf_counter()
     width, height, rgba = png.decode_png(data)
     t1 = time.perf_counter()
@@ -70,13 +93,15 @@ def cmd_encode_decode(args: argparse.Namespace) -> int:
     pixels = to_pixels(rgba)
     n = width * height
     if table is not None:
-        out = core.apply_table(pixels, width, height, args.mode, table, inverse)
+        out = core.apply_table(pixels, width, height, args.mode, table, inverse,
+                               custom_shift=custom)
         steps = core.total_steps(table)
-        net = core.table_shift(n, args.mode, table, inverse)
+        net = core.table_shift(n, args.mode, table, inverse, custom)
     else:
-        out = core.apply_rounds(pixels, width, height, args.mode, rounds, inverse)
+        out = core.apply_rounds(pixels, width, height, args.mode, rounds, inverse,
+                                custom_shift=custom)
         steps = rounds
-        net = (core.shift_for(args.mode, n) * (rounds % n)) % n
+        net = (core.shift_for(args.mode, n, custom) * (rounds % n)) % n
     t2 = time.perf_counter()
 
     Path(args.output).write_bytes(png.encode_png(width, height, out.tobytes()))
@@ -91,7 +116,8 @@ def cmd_encode_decode(args: argparse.Namespace) -> int:
         "table": core.format_table(table) if table else None,
         "rounds": None if table else rounds,
         "steps": steps,
-        "singleShift": core.shift_for(args.mode, n),
+        "customShift": custom,
+        "singleShift": core.shift_for(args.mode, n, custom),
         "netShift": net,
         "ms": {
             "decode": round((t1 - t0) * 1000, 1),
@@ -138,6 +164,15 @@ def cmd_info(args: argparse.Namespace) -> int:
     data = Path(args.input).read_bytes()
     info = png.read_png_info(data)
     n = info["width"] * info["height"]
+    custom = custom_shift_from(args)
+    if custom is not None:
+        try:
+            core.assert_custom_shift(custom, n)
+        except ValueError as err:
+            fail(str(err), 2)
+    shifts = {"compat": core.shift_for("compat", n), "int": core.shift_for("int", n)}
+    if custom is not None:
+        shifts["custom"] = custom
     out = {
         "file": args.input,
         "width": info["width"],
@@ -145,7 +180,7 @@ def cmd_info(args: argparse.Namespace) -> int:
         "megapixels": round(n / 1e6, 3),
         "bitDepth": info["bit_depth"],
         "colorType": info["color_type"],
-        "shifts": {"compat": core.shift_for("compat", n), "int": core.shift_for("int", n)},
+        "shifts": shifts,
     }
     if args.table is not None:
         table = core.parse_table(args.table)
@@ -153,8 +188,8 @@ def cmd_info(args: argparse.Namespace) -> int:
             "table": core.format_table(table),
             "steps": core.total_steps(table),
             "netSteps": core.net_steps(table),
-            "netShift": core.table_shift(n, args.mode, table, False),
-            "netShiftInverse": core.table_shift(n, args.mode, table, True),
+            "netShift": core.table_shift(n, args.mode, table, False, custom),
+            "netShiftInverse": core.table_shift(n, args.mode, table, True, custom),
         })
     print(json.dumps(out, ensure_ascii=False, indent=2))
     return 0
@@ -200,6 +235,17 @@ def cmd_selftest(_args: argparse.Namespace) -> int:
     check("顺序表编码→解码 逐字节还原", enc is not px and list(back) == list(px))
     seq = core.apply_table_sequential(px, w, h, "compat", table)
     check("折叠 1 次 == 逐项展开 27 步", list(enc) == list(seq))
+
+    custom_l = n - 11  # 故意偏离 φ⁻¹·N，验证自定义 L 真的生效
+    enc_c = core.apply_rounds(px, w, h, "custom", 1, custom_shift=custom_l)
+    back_c = core.apply_rounds(enc_c, w, h, "custom", 1, True, custom_shift=custom_l)
+    check(f"自定义 L={custom_l} 编码→解码 逐字节还原", list(back_c) == list(px))
+    try:
+        core.apply_rounds(px, w, h, "custom", 1, custom_shift=n)
+        rejected = False
+    except ValueError:
+        rejected = True
+    check("自定义 L=N 越界被拒绝（不自动取模）", rejected)
 
     small = bytearray((i * 31 + 7) & 0xFF for i in range(23 * 19 * 4))
     buf = png.encode_png(23, 19, small)
@@ -261,6 +307,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     def common(p: argparse.ArgumentParser) -> None:
         p.add_argument("--mode", choices=list(core.MODES), default="compat")
+        p.add_argument("--shift", default=None,
+                       help="自定义模式的 L：整数，且 0 ≤ L < 像素总数")
         p.add_argument("--rounds", type=int, default=None)
         p.add_argument("--table", default=None)
         p.add_argument("--max-mp", type=float, default=core.DEFAULT_MAX_PIXELS / 1e6)
@@ -281,6 +329,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("input")
     p.add_argument("--table", default=None)
     p.add_argument("--mode", choices=list(core.MODES), default="compat")
+    p.add_argument("--shift", default=None,
+                   help="自定义模式的 L：整数，且 0 ≤ L < 像素总数")
 
     sub.add_parser("selftest")
 

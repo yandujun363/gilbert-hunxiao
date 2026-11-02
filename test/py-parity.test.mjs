@@ -73,3 +73,41 @@ test('Python 版 selftest 通过', { skip: SKIP && '没有 python3' }, () => {
   const out = runPy(['selftest']);
   assert.match(out, /全部通过/);
 });
+
+test('Python 版与 JS 版：custom L 产物逐字节相同', { skip: SKIP && '没有 python3' }, () => {
+  const w = 61, h = 47;
+  const px = randomPixels(w * h, 24);
+  const input = path.join(tmp, 'cu_in.png');
+  const out = path.join(tmp, 'cu_enc.png');
+  fs.writeFileSync(input, encodePng({ width: w, height: h, data: px }));
+
+  runPy(['encode', input, out, '--mode', 'custom', '--shift', '777']);
+  const pyPixels = decodePng(fs.readFileSync(out)).data;
+  const jsPixels = applyRounds(px, { width: w, height: h, mode: 'custom', shift: 777, rounds: 1 });
+  assert.equal(diffBytes(pyPixels, jsPixels), 0);
+});
+
+test('Python 版与 JS 版：custom L + 顺序表产物逐字节相同', { skip: SKIP && '没有 python3' }, () => {
+  const w = 53, h = 40;
+  const px = randomPixels(w * h, 25);
+  const input = path.join(tmp, 'cu2_in.png');
+  const out = path.join(tmp, 'cu2_enc.png');
+  fs.writeFileSync(input, encodePng({ width: w, height: h, data: px }));
+
+  runPy(['encode', input, out, '--mode', 'custom', '--shift', '123', '--table', JSON.stringify(TABLE)]);
+  const pyPixels = decodePng(fs.readFileSync(out)).data;
+  const jsPixels = applyTable(px, {
+    width: w, height: h, mode: 'custom', shift: 123, table: TABLE,
+  });
+  assert.equal(diffBytes(pyPixels, jsPixels), 0);
+});
+
+test('Python 版拒绝越界的 custom L（退出码 2）', { skip: SKIP && '没有 python3' }, () => {
+  const w = 20, h = 20;
+  const input = path.join(tmp, 'cu3_in.png');
+  fs.writeFileSync(input, encodePng({ width: w, height: h, data: new Uint8ClampedArray(w * h * 4) }));
+  const r = spawnSync(PY, [CLI, 'encode', input, path.join(tmp, 'cu3_x.png'),
+    '--mode', 'custom', '--shift', '400'], { encoding: 'utf8' });
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /0 ≤ L < 400/);
+});

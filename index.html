@@ -128,7 +128,7 @@
       <span>CLI 优先</span>
       <span>零三方依赖</span>
       <span>顺序表</span>
-      <span>兼容 / 整数双模式</span>
+      <span>兼容 / 整数 / 自定义 L</span>
       <span>大图保护</span>
     </div>
     <div class="actions">
@@ -152,6 +152,9 @@ node ci/cli.mjs decode out.png back.png --rounds 3
 node ci/cli.mjs encode in.png enc.png --table "[1,-3,4,7,-5,7]"
 node ci/cli.mjs decode enc.png back.png --table "[1,-3,4,7,-5,7]"
 
+node ci/cli.mjs encode in.png enc.png --mode custom --shift 123456
+node ci/cli.mjs decode enc.png back.png --mode custom --shift 123456
+
 node ci/cli.mjs gen-table --length 8 --range 8
 node ci/cli.mjs selftest</code></pre>
       </article>
@@ -163,6 +166,9 @@ python3 ci/py/gilbert_cli.py decode out.png back.png --rounds 3
 python3 ci/py/gilbert_cli.py encode in.png enc.png --table "[1,-3,4,7,-5,7]"
 python3 ci/py/gilbert_cli.py decode enc.png back.png --table "[1,-3,4,7,-5,7]"
 
+python3 ci/py/gilbert_cli.py encode in.png enc.png --mode custom --shift 123456
+python3 ci/py/gilbert_cli.py decode enc.png back.png --mode custom --shift 123456
+
 python3 ci/py/gilbert_cli.py selftest
 python3 ci/py/gilbert_cli.py bench --mp 1</code></pre>
       </article>
@@ -170,7 +176,7 @@ python3 ci/py/gilbert_cli.py bench --mp 1</code></pre>
     <ul class="facts">
       <li><b>不二次编码</b>PNG 解码 → 内存置换 → PNG 输出，全程只编码一次。</li>
       <li><b>顺序表</b><code>[1,-3,4,7,-5,7]</code> 编码正着走，解码倒表取反；27 步折叠成 1 次旋转。<b>仅本项目内一键还原</b>，外部同规则工具得手动逐步反向。</li>
-      <li><b>双模式</b><code>compat</code> 兼容浮点取整，<b>仅单次编码</b>可跨实现一键互解；<code>int</code> 纯整数、独立闭环。</li>
+      <li><b>三模式</b><code>compat</code> 兼容浮点取整，<b>仅单次编码</b>可跨实现一键互解；<code>int</code> 纯整数、独立闭环；<code>custom</code> 手填 L（整数，0 ≤ L &lt; 像素总数，越界直接报错）。</li>
       <li><b>大图保护</b>默认 16 MP / 单边 8192 px，超限在 inflate 前直接报错。</li>
     </ul>
   </section>

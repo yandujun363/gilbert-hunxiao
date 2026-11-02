@@ -83,3 +83,46 @@ test('--table 与 --rounds 互斥', () => {
     return true;
   });
 });
+
+test('custom 模式：--shift 往返逐字节一致', () => {
+  const w = 61, h = 47;
+  const px = randomPixels(w * h, 14);
+  const input = path.join(tmp, 'cu_in.png');
+  const enc = path.join(tmp, 'cu_enc.png');
+  const back = path.join(tmp, 'cu_back.png');
+  fs.writeFileSync(input, encodePng({ width: w, height: h, data: px }));
+
+  const out = run(['encode', input, enc, '--mode', 'custom', '--shift', '777']);
+  assert.match(out, /mode=custom/);
+  assert.match(out, /L=777/);
+  assert.ok(diffBytes(px, decodePng(fs.readFileSync(enc)).data) > px.length * 0.9, '应真的打乱');
+  run(['decode', enc, back, '--mode', 'custom', '--shift', '777']);
+
+  assert.equal(diffBytes(px, decodePng(fs.readFileSync(back)).data), 0);
+});
+
+test('custom 模式：L 越界 / 缺失 / 与非 custom 混用都报错', () => {
+  const w = 20, h = 20;
+  const input = path.join(tmp, 'cu_bad.png');
+  fs.writeFileSync(input, encodePng({ width: w, height: h, data: new Uint8ClampedArray(w * h * 4) }));
+  const out = path.join(tmp, 'cu_x.png');
+
+  for (const args of [
+    ['encode', input, out, '--mode', 'custom'],                       // 缺 --shift
+    ['encode', input, out, '--mode', 'custom', '--shift', '400'],     // L = N
+    ['encode', input, out, '--mode', 'custom', '--shift=-1'],          // 负数（写成 = 形式交给解析器）
+    ['encode', input, out, '--mode', 'custom', '--shift', '1.5'],     // 非整数
+    ['encode', input, out, '--shift', '3'],                           // 没开 custom
+  ]) {
+    assert.throws(() => run(args, { stdio: 'pipe' }), (err) => err.status === 2, args.join(' '));
+  }
+});
+
+test('info 能显示 custom 的 L', () => {
+  const w = 20, h = 20;
+  const input = path.join(tmp, 'cu_info.png');
+  fs.writeFileSync(input, encodePng({ width: w, height: h, data: new Uint8ClampedArray(w * h * 4) }));
+  const obj = JSON.parse(run(['info', input, '--mode', 'custom', '--shift', '13']));
+  assert.equal(obj.shifts.custom, 13);
+  assert.equal(obj.shifts.compat, 247);
+});

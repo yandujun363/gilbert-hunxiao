@@ -49,6 +49,28 @@ test('折叠成一次旋转 == 逐项展开（多种尺寸/模式/表）', () =>
   }
 });
 
+test('custom 模式：折叠 == 逐项展开，编码→解码逐字节还原', () => {
+  const w = 37, h = 53, n = w * h;
+  const px = randomPixels(n, 31);
+  const tables = [[1, -3, 4, 7, -5, 7], [-2, 5], [9]];
+  for (const shift of [0, 1, 777, n - 1]) {
+    for (const table of tables) {
+      const fast = applyTable(px, { width: w, height: h, mode: 'custom', shift, table });
+      const slow = applyTableSequential(px, { width: w, height: h, mode: 'custom', shift, table });
+      assert.equal(diffBytes(fast, slow), 0, `L=${shift} ${formatTable(table)}`);
+
+      const back = applyTable(fast, { width: w, height: h, mode: 'custom', shift, table, inverse: true });
+      assert.equal(diffBytes(px, back), 0, `L=${shift} 往返 ${formatTable(table)}`);
+    }
+  }
+});
+
+test('custom 模式：tableShift 越界 L 抛错（不取模）', () => {
+  assert.throws(() => tableShift(100, 'custom', [1, -2], false, 100), RangeError);
+  assert.throws(() => tableShift(100, 'custom', [1, -2]), RangeError);
+  assert.equal(tableShift(100, 'custom', [1, -2], false, 7), (7 * 99) % 100);
+});
+
 test('表编码 → 表解码 = 逐字节还原（含随机表）', () => {
   const px = randomPixels(41 * 29, 99);
   for (const table of [[1, -3, 4, 7, -5, 7], generateTable({ length: 8, range: 8 })]) {

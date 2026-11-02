@@ -22,7 +22,7 @@
     <div class="badges">
       <span>零二次编码</span>
       <span>顺序表</span>
-      <span>浮点 / 整数双模式</span>
+      <span>三模式 · 自定义 L</span>
       <span>大图保护</span>
     </div>
   </div>
@@ -62,7 +62,7 @@
       <h2>快速上手</h2>
       <ol class="steps">
         <li><b>载入</b>拖拽 / 粘贴 / 选择文件。超过像素上限会<strong>直接报错</strong>，不会偷偷缩放。</li>
-        <li><b>混淆</b>「混淆 1 轮」走一步；「按表编码」按顺序表一次走完（表里 27 步也只重排一次）。</li>
+        <li><b>混淆</b>「混淆 1 轮」走一步，L 由上面选的模式决定（custom 可手填）；「按表编码」按顺序表一次走完（表里 27 步也只重排一次）。</li>
         <li><b>校验</b>「与原始图」显示<em>逐像素相同</em>就是零损失；做对应次数的解混淆即可回到这里。</li>
         <li><b>导出</b>只有点下载时才真正编码一次：PNG 无损，JPEG 可选质量。</li>
       </ol>
@@ -70,12 +70,20 @@
 
     <section class="card">
       <h2>单步混淆</h2>
-      <label>取整规则
-        <select id="mode" title="一次编码 = 沿曲线后移 L 位；两种模式的 L 不同">
+      <label>L 规则
+        <select id="mode" title="一次编码 = 沿曲线后移 L 位；三种模式的 L 规则不同">
           <option value="compat">兼容模式（浮点取整）</option>
           <option value="int">整数模式（纯整数）</option>
+          <option value="custom">自定义模式（手填 L）</option>
         </select>
       </label>
+      <div id="custom-shift-box" hidden>
+        <label>自定义 L
+          <input id="custom-shift" type="number" min="0" step="1" inputmode="numeric" placeholder="0 ≤ L < N">
+        </label>
+        <p class="note">必须是整数，且 0 ≤ L &lt; 像素总数；越界直接报错，不自动取模。</p>
+        <p class="note error" id="custom-shift-error" hidden></p>
+      </div>
       <div class="row">
         <button id="enc" title="按当前模式正向置换 1 次">混淆 1 轮</button>
         <button id="dec" title="按当前模式反向置换 1 次">解混淆 1 轮</button>
@@ -124,11 +132,13 @@
           只有点「下载」时才编码一次。</p>
         <p><b>顺序表怎么算？</b>一次编码 = 沿曲线后移 <code>L</code> 位，所以正向 k 次 = <code>k·L</code>、
           反向 = <code>−k·L</code>；整张表等价于一次 <code>(Σ表项)·L</code> 的旋转，展开 27 步也只重排一次。</p>
-        <p><b>两种模式？</b><code>compat</code>（兼容模式）用 <code>round(φ⁻¹·N)</code> 取整，
+        <p><b>三种模式？</b><code>compat</code>（兼容模式）用 <code>round(φ⁻¹·N)</code> 取整，
           <b>只有单次编码</b>（单轮、不带表）才与采用同一取整规则的实现一键互解；
           多轮或按表之后，外部实现仍能解，但只能手动按对方向重复净步数次，容易点错。
-          <code>int</code>（整数模式）用 <code>(N×618)/1000</code>，
-          全程整数、跨平台确定，但与兼容模式<b>不互通</b>。</p>
+          <code>int</code>（整数模式）用 <code>(N×618)/1000</code>，全程整数、跨平台确定，
+          但与兼容模式<b>不互通</b>。
+          <code>custom</code>（自定义模式）直接手填 <code>L</code>，用来复现别的实现的位移或做实验；
+          <code>L</code> 必须是整数且 <code>0 ≤ L &lt; 像素总数</code>，越界直接报错、不自动取模。</p>
         <p><b>为什么优先用 CLI？</b>批处理、大图、自动化都更适合命令行：<code>ci/cli.mjs</code>（Node）和
           <code>ci/py/gilbert_cli.py</code>（Python）无头、零三方依赖、PNG 进 PNG 出。浏览器里没有 Node / Python
           运行时，所以本页面只是可选 GUI。两者共用同一套算法，<b>产物逐字节互通</b>

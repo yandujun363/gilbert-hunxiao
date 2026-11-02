@@ -46,6 +46,26 @@ jobs:
           python3 ci/py/gilbert_cli.py decode /tmp/py_enc.png /tmp/py_back.png --table "[1,-3,4,7,-5,7]"
           python3 --version
 
+      - name: 自定义 L 端到端（往返 + 越界拒绝）
+        run: |
+          node ci/cli.mjs encode /tmp/fixture.png /tmp/cu_enc.png --mode custom --shift 777
+          node ci/cli.mjs decode /tmp/cu_enc.png /tmp/cu_back.png --mode custom --shift 777
+          node --input-type=module -e "
+            import fs from 'node:fs';
+            import { decodePng } from './src/core/png.js';
+            const a = decodePng(fs.readFileSync('/tmp/fixture.png')).data;
+            const b = decodePng(fs.readFileSync('/tmp/cu_back.png')).data;
+            let d = 0;
+            for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) d++;
+            if (d) { console.error('custom 往返差异字节数:', d); process.exit(1); }
+            console.log('custom 往返逐字节相同 ✔');
+          "
+          if node ci/cli.mjs encode /tmp/fixture.png /tmp/cu_x.png --mode custom --shift 999999; then
+            echo "越界 L 应该被拒绝却成功了"; exit 1
+          else
+            echo "越界 L 已按预期拒绝 ✔"
+          fi
+
       - name: 超大图必须被拒绝（退出码 1）
         run: |
           node ci/make-fixture.mjs /tmp/big.png 400 400

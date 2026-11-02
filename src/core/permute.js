@@ -75,13 +75,14 @@ export function permuteInto(src, dst, order, shift, inverse = false) {
 /**
  * 单步置换（返回新缓冲）。
  * @param {Uint8ClampedArray} pixels
- * @param {{width:number,height:number,mode:'compat'|'int',shift?:number,inverse?:boolean}} options
+ * @param {{width:number,height:number,mode:'compat'|'int'|'custom',shift?:number,inverse?:boolean}} options
+ *   `shift` 只在 mode='custom' 时使用，必须是 0 ≤ shift < width·height。
  */
 export function permute(pixels, options) {
   const { width, height, mode, inverse = false } = options;
   const n = width * height;
   const order = orderFor(width, height);
-  const shift = options.shift ?? shiftFor(mode, n);
+  const shift = shiftFor(mode, n, options.shift);
   const out = new Uint8ClampedArray(pixels.length);
   permuteInto(pixels, out, order, shift, inverse);
   return out;
@@ -90,13 +91,14 @@ export function permute(pixels, options) {
 /**
  * 顺序表编码/解码的净位移（单位：像素位置）。
  * @param {number} n 像素总数
- * @param {'compat'|'int'} mode
+ * @param {'compat'|'int'|'custom'} mode
  * @param {number[]} table
  * @param {boolean} [inverse] 解码时传 true
+ * @param {number} [customShift] 仅 custom 模式使用
  */
-export function tableShift(n, mode, table, inverse = false) {
+export function tableShift(n, mode, table, inverse = false, customShift) {
   const t = inverse ? invertTable(table) : table;
-  const L = shiftFor(mode, n);
+  const L = shiftFor(mode, n, customShift);
   return normalizeShift(L * normalizeShift(netSteps(t), n), n);
 }
 
@@ -107,7 +109,7 @@ export function tableShift(n, mode, table, inverse = false) {
  * 所以合计等于旋转 (Σ 表项)·L，只做 1 次置换即可，结果逐像素相同。
  *
  * @param {Uint8ClampedArray|Uint8Array} pixels
- * @param {{width:number,height:number,mode:'compat'|'int',table:number[],inverse?:boolean}} options
+ * @param {{width:number,height:number,mode:'compat'|'int'|'custom',table:number[],inverse?:boolean,shift?:number}} options
  * @param {Uint8ClampedArray|Uint8Array} [out]
  */
 export function applyTable(pixels, options, out) {
@@ -116,7 +118,7 @@ export function applyTable(pixels, options, out) {
   const n = width * height;
   const order = orderFor(width, height);
   const dst = out ?? new Uint8ClampedArray(pixels.length);
-  permuteInto(pixels, dst, order, tableShift(n, mode, table, inverse), false);
+  permuteInto(pixels, dst, order, tableShift(n, mode, table, inverse, options.shift), false);
   return dst;
 }
 
@@ -124,13 +126,13 @@ export function applyTable(pixels, options, out) {
  * 朴素实现：逐项、逐次执行（用于测试对拍与性能对比，勿用于大图）。
  * 只读 pixels，返回新缓冲。
  * @param {Uint8ClampedArray|Uint8Array} pixels
- * @param {{width:number,height:number,mode:'compat'|'int',table:number[],inverse?:boolean}} options
+ * @param {{width:number,height:number,mode:'compat'|'int'|'custom',table:number[],inverse?:boolean,shift?:number}} options
  */
 export function applyTableSequential(pixels, options) {
   const { width, height, mode, table, inverse = false } = options;
   const n = width * height;
   const order = orderFor(width, height);
-  const L = shiftFor(mode, n);
+  const L = shiftFor(mode, n, options.shift);
   const steps = inverse ? invertTable(table) : table;
 
   const a = new Uint8ClampedArray(pixels.length);
@@ -155,7 +157,7 @@ export function applyTableSequential(pixels, options) {
  * 连续做 rounds 次单步置换（零拷贝乒乓）。
  * 注意：可能复用并写入传入的缓冲（rounds 为偶数时会写回 pixels），调用方不要再读旧缓冲。
  * @param {Uint8ClampedArray|Uint8Array} pixels
- * @param {{width:number,height:number,mode:'compat'|'int',rounds:number,inverse?:boolean}} options
+ * @param {{width:number,height:number,mode:'compat'|'int'|'custom',rounds:number,inverse?:boolean,shift?:number}} options
  * @param {Uint8ClampedArray|Uint8Array} [out] 复用第二个缓冲（大图避免每次点击都新分配）
  */
 export function applyRounds(pixels, options, out) {
@@ -163,7 +165,7 @@ export function applyRounds(pixels, options, out) {
   if (!Number.isInteger(rounds) || rounds < 0) throw new RangeError(`轮数非法: ${rounds}`);
   const n = width * height;
   const order = orderFor(width, height);
-  const L = shiftFor(mode, n);
+  const L = shiftFor(mode, n, options.shift);
   let src = pixels;
   let dst = out ?? new Uint8ClampedArray(pixels.length);
   if (dst === pixels) throw new RangeError('out 不能与输入是同一个缓冲');
