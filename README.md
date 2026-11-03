@@ -1,5 +1,9 @@
 # Gilbert 图片混淆（CLI 优先 · Node / Python + 无损网页版）
 
+> [!WARNING]
+> 此项目为纯Agent产物，由deepseek-harness+deepseek-flash全权编写
+> 不保证项目可用性
+
 把图片按 Gilbert 空间填充曲线打散成不可读的样子，再原样还原。
 **像素只在内存里置换，整条链路不重新编码** —— 混淆多少次都不会掉画质。
 
